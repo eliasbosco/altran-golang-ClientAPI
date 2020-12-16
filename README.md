@@ -1,0 +1,1 @@
+# altran-golang-code-challenge
