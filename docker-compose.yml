@@ -1,0 +1,15 @@
+version: '3.7'
+
+services:
+
+  clientapi:
+    container_name: altran-golang-clientapi
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - './:/tmp'
+    ports:
+      - 10000:10000
+    environment:
+      - GOMAXPROCS=4
