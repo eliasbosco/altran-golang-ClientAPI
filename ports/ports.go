@@ -57,19 +57,65 @@ func GetPorts(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if err == nil {
-			Unmarshal(w, r, skip, limit)
+			GetPortsFromJsonFile(w, r, skip, limit)
 		}
 	}
 }
 
-//Unmarshal Read []byte from ports.json and Unmarshal as Ports type
+//GetPorts get info from ports.json file endpoint
+func GetPortsDb(w http.ResponseWriter, r *http.Request) {
+	w, err := utils.CheckMethod(w, r, "GET")
+	w, err = utils.CheckContentType(w, r)
+	w.Header().Set("Content-Type", "application/json")
+	config := cfg.SetupConfig()
+
+	if err == nil {
+		portId := ""
+		skip := 0
+		limit := skip + 100
+		if r.URL.Query().Get("port_id") != "" {
+			portId = r.URL.Query().Get("port_id")
+			utils.Check(w, "ports.GetPortsDb-1", err)
+		} else {
+
+			if r.URL.Query().Get("skip") != "" {
+				skip, err = strconv.Atoi(r.URL.Query().Get("skip"))
+				utils.Check(w, "ports.GetPorts-1", err)
+			}
+
+			limit := skip + 100
+			if r.URL.Query().Get("limit") != "" {
+				limit, err = strconv.Atoi(r.URL.Query().Get("limit"))
+				utils.Check(w, "ports.GetPorts-2", err)
+
+				if err == nil && limit <= skip {
+					err = errors.New("The parameter 'Limit' must be greater than parameter 'skip'")
+					utils.Check(w, "ports.GetPorts-3", err)
+				}
+
+				//check whether difference between limit and skip is bigger
+				//than 1000 records
+				if (limit - skip) > config.RecordLimit {
+					err = errors.New(fmt.Sprintf("Difference between parameter 'Limit' and parameter 'skip' must be lower than %d records", config.RecordLimit))
+					utils.Check(w, "ports.GetPorts-4", err)
+				}
+			}
+		}
+
+		if err == nil {
+			GetPortsFromSqlite(w, r, portId, skip, limit)
+		}
+	}
+}
+
+//GetPortsFromJsonFile Read []byte from ports.json and Unmarshal as Ports type
 //slicing the object and counting to delivery only the number
 //of records informed from the skip to limit
-func Unmarshal(w http.ResponseWriter, r *http.Request, skip int, limit int) ([]byte, error) {
+func GetPortsFromJsonFile(w http.ResponseWriter, r *http.Request, skip int, limit int) error {
 	// open ports.json file
 	f, err := os.Open("/tmp/ports.json")
 	if utils.Check(w, "ports.Unmarshal-1", err); err != nil {
-		return nil, err
+		return err
 	}
 	defer f.Close()
 
@@ -116,7 +162,7 @@ func Unmarshal(w http.ResponseWriter, r *http.Request, skip int, limit int) ([]b
 					var ports types.Ports
 					err = json.Unmarshal([]byte(record), &ports)
 					if utils.Check(w, "ports.Unmarshal-2", err); err != nil {
-						return nil, err
+						return err
 					}
 					portsArr = append(portsArr, ports)
 
@@ -189,14 +235,60 @@ func Unmarshal(w http.ResponseWriter, r *http.Request, skip int, limit int) ([]b
 		/***** Wait for user exiting the program *****/
 		// Unless you exit the program (e.g. CTRL+C), channelz data will be available for querying.
 		// Users can take time to examine and learn about the info provided by channelz.
-		select {}
+		//select {}
 	}(&pbPorts)
 
 	ret, err := json.Marshal(portsArr)
 	if utils.Check(w, "ports.Unmarshal-3", err); err != nil {
-		return nil, err
+		return err
 	}
 	fmt.Fprintf(w, string(ret))
 
-	return nil, nil
+	return nil
+}
+
+func GetPortsFromSqlite(w http.ResponseWriter, r *http.Request, portId string, skip int, limit int) error {
+	config := cfg.SetupConfig()
+
+	/***** Initialize manual resolver and Dial *****/
+	res := manual.NewBuilderWithScheme("whatever")
+	// Set up a connection to the server.
+	conn, err := grpc.Dial(res.Scheme()+":///test.server",
+		grpc.WithInsecure(), grpc.WithResolvers(res), grpc.WithDefaultServiceConfig(`{"loadBalancingPolicy":"round_robin"}`))
+	if err != nil {
+		log.Printf("did not connect: %v", err)
+	}
+	defer conn.Close()
+
+	// Manually provide resolved addresses for the target.
+	grpcAddresses := strings.Split(config.GrpcAddress, ",")
+	address := []resolver.Address{}
+	for _, add := range grpcAddresses {
+		address = append(address, resolver.Address{Addr: add})
+	}
+	res.UpdateState(resolver.State{Addresses: address})
+
+	c := pb.NewPortsDbClient(conn)
+
+	// Setting a 150ms timeout on the RPC.
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+
+	resp, err := c.GetPortsDb(ctx, &pb.Request{PortId:portId, Skip: int32(skip), Limit: int32(limit)})
+	if err != nil {
+		log.Printf("could not reach out gRPC server: %v\n", err)
+	}
+
+	/***** Wait for user exiting the program *****/
+	// Unless you exit the program (e.g. CTRL+C), channelz data will be available for querying.
+	// Users can take time to examine and learn about the info provided by channelz.
+	//select {}
+
+	ret, err := json.Marshal(&resp.PortsBody)
+	if utils.Check(w, "ports.GetPortsFromSqlite-3", err); err != nil {
+		return err
+	}
+	fmt.Fprintf(w, string(ret))
+
+	return nil
 }

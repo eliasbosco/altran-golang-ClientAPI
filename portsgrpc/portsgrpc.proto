@@ -24,6 +24,13 @@ message Response {
     string message = 2;
 }
 
+message Request {
+    int32 skip = 1;
+    int32 limit = 2;
+    string port_id = 3;
+}
+
 service PortsDb {
   rpc Upsert(Ports) returns (Response) {}
+  rpc GetPortsDb(Request) returns (Ports) {}
 }
