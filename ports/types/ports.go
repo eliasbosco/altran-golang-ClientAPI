@@ -10,7 +10,7 @@ type PortsBody struct {
 	Country     string    `json:"country"`
 	Alias       []string  `json:"alias"`
 	Regions     []string  `json:"regions"`
-	Coordinates []float64 `json:"coordinates"`
+	Coordinates []float32 `json:"coordinates"`
 	Province    string    `json:"province"`
 	Timezone    string    `json:"timezone"`
 	Unlocs      []string  `json:"unlocs"`

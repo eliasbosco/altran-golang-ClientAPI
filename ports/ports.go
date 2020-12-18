@@ -1,18 +1,27 @@
 package ports
 
 import (
+	pb "../portsgrpc"
+	cfg "../types"
+	"../utils"
+	"./types"
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/resolver"
+	"google.golang.org/grpc/resolver/manual"
 	"io"
+	"log"
 	"net/http"
 	"os"
+	"reflect"
 	"regexp"
 	"strconv"
-
-	"../utils"
-	"./types"
+	"strings"
+	"time"
 )
 
 //GetPorts get info from ports.json file endpoint
@@ -20,6 +29,7 @@ func GetPorts(w http.ResponseWriter, r *http.Request) {
 	w, err := utils.CheckMethod(w, r, "GET")
 	w, err = utils.CheckContentType(w, r)
 	w.Header().Set("Content-Type", "application/json")
+	config := cfg.SetupConfig()
 
 	if err == nil {
 		skip := 0
@@ -34,8 +44,15 @@ func GetPorts(w http.ResponseWriter, r *http.Request) {
 			utils.Check(w, "ports.GetPorts-2", err)
 
 			if err == nil && limit <= skip {
-				err = errors.New("The parameter 'Limit' must to be greater than parameter 'skip'")
+				err = errors.New("The parameter 'Limit' must be greater than parameter 'skip'")
 				utils.Check(w, "ports.GetPorts-3", err)
+			}
+
+			//check whether difference between limit and skip is bigger
+			//than 1000 records
+			if (limit - skip) > config.RecordLimit {
+				err = errors.New(fmt.Sprintf("Difference between parameter 'Limit' and parameter 'skip' must be lower than %d records", config.RecordLimit))
+				utils.Check(w, "ports.GetPorts-4", err)
 			}
 		}
 
@@ -67,6 +84,8 @@ func Unmarshal(w http.ResponseWriter, r *http.Request, skip int, limit int) ([]b
 	var recordEnd = regexp.MustCompile(`(  \}(\,|)\n)`)       // tail
 	record := ""
 	writingRecord := false
+	pbPorts := pb.Ports{}
+
 	for {
 		fb, errf := rf.ReadBytes('\n')
 		str := string(fb)
@@ -85,20 +104,39 @@ func Unmarshal(w http.ResponseWriter, r *http.Request, skip int, limit int) ([]b
 			writingRecord = false
 
 			if recordCount >= skip {
-				if record[len(record)-2:len(record)-1] == "," {
-					record = record[:len(record)-2]
-				}
+				log.Printf("[if recordCount(%v) >= skip(%v)]: record(%v)\n", recordCount, skip, record)
+				if record != "" {
+					if record[len(record)-2:len(record)-1] == "," {
+						record = record[:len(record)-2]
+					}
 
-				record = "{\n" + record + "\n}"
-				fmt.Println(record)
+					record = "{\n" + record + "\n}"
+					fmt.Println(record)
 
-				var ports types.Ports
-				err = json.Unmarshal([]byte(record), &ports)
-				if utils.Check(w, "ports.Unmarshal-2", err); err != nil {
-					return nil, err
+					var ports types.Ports
+					err = json.Unmarshal([]byte(record), &ports)
+					if utils.Check(w, "ports.Unmarshal-2", err); err != nil {
+						return nil, err
+					}
+					portsArr = append(portsArr, ports)
+
+					//gRPC array append
+					portId := reflect.ValueOf(ports).MapKeys()[0].String()
+					pbPorts.PortsBody = append(pbPorts.PortsBody, &pb.PortsBody{
+						PortId: portId,
+						Name: ports[portId].Name,
+						City: ports[portId].City,
+						Country: ports[portId].Country,
+						Alias: ports[portId].Alias,
+						Regions: ports[portId].Regions,
+						Coordinates: ports[portId].Coordinates,
+						Province: ports[portId].Province,
+						Timezone: ports[portId].Timezone,
+						Unlocs: ports[portId].Unlocs,
+						Code: ports[portId].Code,
+					})
+					record = ""
 				}
-				portsArr = append(portsArr, ports)
-				record = ""
 			}
 
 			recordCount++
@@ -111,6 +149,48 @@ func Unmarshal(w http.ResponseWriter, r *http.Request, skip int, limit int) ([]b
 		}
 
 	}
+
+	//send parallelized gRPC message
+	go func(in *pb.Ports) {
+		config := cfg.SetupConfig()
+
+		/***** Initialize manual resolver and Dial *****/
+		r := manual.NewBuilderWithScheme("whatever")
+		// Set up a connection to the server.
+		conn, err := grpc.Dial(r.Scheme()+":///test.server",
+			grpc.WithInsecure(), grpc.WithResolvers(r), grpc.WithDefaultServiceConfig(`{"loadBalancingPolicy":"round_robin"}`))
+		if err != nil {
+			log.Printf("did not connect: %v", err)
+		}
+		defer conn.Close()
+
+		// Manually provide resolved addresses for the target.
+		grpcAddresses := strings.Split(config.GrpcAddress, ",")
+		address := []resolver.Address{}
+		for _, add := range grpcAddresses {
+			address = append(address, resolver.Address{Addr: add})
+		}
+		r.UpdateState(resolver.State{Addresses: address})
+
+		c := pb.NewPortsDbClient(conn)
+
+		// Setting a 150ms timeout on the RPC.
+		ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+		defer cancel()
+
+		resp, err := c.Upsert(ctx, in)
+		if err != nil {
+			log.Printf("could not reach out gRPC server: %v\n", err)
+		}
+		if resp != nil {
+			log.Printf("Code: %s - Message: %s", resp.Code, resp.Message)
+		}
+
+		/***** Wait for user exiting the program *****/
+		// Unless you exit the program (e.g. CTRL+C), channelz data will be available for querying.
+		// Users can take time to examine and learn about the info provided by channelz.
+		select {}
+	}(&pbPorts)
 
 	ret, err := json.Marshal(portsArr)
 	if utils.Check(w, "ports.Unmarshal-3", err); err != nil {

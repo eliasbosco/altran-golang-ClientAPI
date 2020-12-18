@@ -1,0 +1,29 @@
+syntax = "proto3";
+package portsgrpc;
+
+message Ports {
+    repeated PortsBody ports_body = 1;
+}
+
+message PortsBody {
+    string port_id = 1;
+    string name = 2;
+    string city = 3;
+    string country = 4;
+    repeated string alias = 5;
+    repeated string regions = 6;
+    repeated float coordinates = 7;
+    string province = 8;
+    string timezone = 9;
+    repeated string unlocs = 10;
+    string code = 11;
+}
+
+message Response {
+    string code = 1;
+    string message = 2;
+}
+
+service PortsDb {
+  rpc Upsert(Ports) returns (Response) {}
+}

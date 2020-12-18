@@ -1,4 +1,4 @@
-version: '3.7'
+version: '2.4'
 
 services:
 
@@ -7,9 +7,23 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    mem_limit: 50M
     volumes:
       - './:/tmp'
     ports:
-      - 10000:10000
+      - "10000:10000"
+    networks:
+      network_clientapi:
     environment:
       - GOMAXPROCS=4
+      - API_PORT=${API_PORT}
+      - GRPC_ADDRESS=${GRPC_ADDRESS}
+      - GRPC_PORT=${GRPC_PORT}
+      - RECORD_LIMIT=${RECORD_LIMIT}
+
+networks:
+  network_clientapi:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.31.0/24
