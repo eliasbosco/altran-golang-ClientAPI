@@ -33,7 +33,7 @@ To shut the service off:
 $ docker-compose down
 ```
 
-[^Notice: every environments variables are set on &quot;.env&quot; file, at the project root.]: 
+Notice: every environments variables are set on &quot;.env&quot; file, at the project root.
 
 ## Resources
 
