@@ -1,3 +1,5 @@
+// Types responsible to keep all the configurations
+// variables used in the whole service
 package types
 
 import (
@@ -5,14 +7,19 @@ import (
 	"strconv"
 )
 
-//Config all configurations variable used to connect to services
+//Config keep all configurations properties to be used in the whole service
 type Config struct {
+	// GrpcAddress address and port used to
+	// connect to the gRPC server
 	GrpcAddress string
+	// APIAddress address used to the Rest API listener
 	APIAddress  string
+	// Max number of records sent to response
 	RecordLimit int
 }
 
-//SetupConfig Using environment variables to setup all the configuration's variables
+//SetupConfig Get the environment variables values and set accordingly
+//all the related Config properties
 func SetupConfig() Config {
 	config := Config{}
 	if os.Getenv("GRPC_ADDRESS") == "" {
